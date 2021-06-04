@@ -8,24 +8,70 @@ import matplotlib
 import matplotlib.pyplot as plt
 
 import cv2 
-from tensorflow.keras.models import load_model
+# from tensorflow.keras.models import load_model
 from common.tools.lib.parser import parser
 import cv2
 import sys
 camerafile = sys.argv[1]
-supercombo = load_model('models/supercombo.keras')
+# supercombo = load_model('models/supercombo.keras')
 
 import onnxruntime
 import onnx
 import pdb
+import csv
+
+import torch
+import torchvision
+from onnx2pytorch import ConvertModel
+from torchsummary import summary
 
 # so = onnxruntime.SessionOptions()
 # so.add_session_config_entry('session.load_model_format','ORT')
-onnx_session = onnxruntime.InferenceSession('models/supercombo_newmodel.onnx')
 
+# onnxruntime.set_default_logger_severity(0)
+sess_options = onnxruntime.SessionOptions()
+# sess_options.add_session_config_entry('session.load_model_format','ORT')
+providers = [
+    ('CUDAExecutionProvider', {
+        'device_id': 0,
+        'arena_extend_strategy': 'kNextPowerOfTwo',
+    }),
+    'CPUExecutionProvider',
+]
+
+onnx_session = onnxruntime.InferenceSession('models/supercombo_kl.onnx', sess_options, providers=providers)
+print(onnxruntime.get_device())
+print(onnx_session.get_providers())
+onnx_model = onnx.load('models/supercombo.onnx')
+# torch_model = ConvertModel(onnx_model, experimental=True)
+# print(torch_model)
+# torch_model.eval()
+# torch_model.cuda()
 #MAX_DISTANCE = 140.
 #LANE_OFFSET = 1.8
 #MAX_REL_V = 10.
+
+xoff = -120
+
+###############################################################################################
+
+FLIR_INTRINSIC = np.array([[ 761.0873603470,    0.6397502148,  xoff + 638.3952017077],
+    [0.0000000000,  764.1428410652,  519.2878000527],
+    [0.0000000000,    0.0000000000,    1.0000000000]])
+
+GALAXY_INTRINSIC = np.array([[602, 0.0, xoff + 360],
+                            [0.0, 602, 240],
+                            [0.0, 0.0, 1.0]])
+
+gopro_intrinsics = np.array([[850.0, 0.0, 960.0],
+                              [0.0, 850.0, 640.0],
+                              [0.0, 0.0, 1.0]])
+
+galaxy_intrinsics = np.array([[1000, 0.0, 960],
+                            [0.0, 1000, 540],
+                            [0.0, 0.0, 1.0]])
+
+#################################################################################################
 
 #LEAD_X_SCALE = 10
 #LEAD_Y_SCALE = 10
@@ -47,7 +93,18 @@ DISPLAY_HEIGHT = 450
 # subprocess.call(cmd, shell=True)
 cap = cv2.VideoCapture(camerafile)
 
-imgs = []
+# imgs = []
+
+# fcount = 0
+# while True:
+#   try:
+#     ret, frame = cap.read()
+#     height, width, channel = frame.shape
+#     fcount += 1
+#     print(fcount)
+#   except:
+#     break
+
 
 # for i in tqdm(range(800)):
 #   ret, frame = cap.read()
@@ -76,39 +133,45 @@ imgs = []
 #   # cv2.imshow('test2',img_yuv.reshape((height*3//2, width)))
 #   # cv2.waitKey(100)  
 #   imgs.append(img_yuv.reshape((height*3//2, width)))
-
-for i in tqdm(range(800)):
-  ret, frame = cap.read()
-  height, width, channel = frame.shape
-  # cv2.imshow('raw',frame)
-  # frame = cv2.flip(frame,0)
-  # frame = cv2.flip(frame,1)
-  #if height > TARGET_HEIGHT:
-  #width = int( width * TARGET_HEIGHT / height)
-  #dim = (width, TARGET_HEIGHT)
-  #height = TARGET_HEIGHT
-  #frame = cv2.resize(frame, dim, interpolation = cv2.INTER_AREA)
-  w = TARGET_WIDTH
-  h = TARGET_HEIGHT
-  # TARGET_WIDTH and TARGET_HEIGHT are set to 1164, 874 as sample.hevc file. You can modify these at line 31.
-  # Below code will crop image.
-  # x axis: from center (automatically)
-  # y axis: from top (you can adjust 'y' to make change for wi arae wi wi arae wi arae wiwi arae...)
-  x = int(width/2 -w/2)
-  y = 200             # modify this from 0 to (HEIGHT - TARGET_HEIGHT).
-  xoff = 0
-  frame = frame[y: y + h, x+xoff: x + w +xoff]
-  width = w
-  height = h
-  img_yuv = cv2.cvtColor(frame, cv2.COLOR_BGR2YUV_I420)
-  # imgs.append(img_yuv.reshape((height*3//2, width)))
-  # if i%6 == 0:
-  imgs.append(img_yuv)
+# fcount = 0
+# while True:
+#   try:
+#     ret, frame = cap.read()
+#     height, width, channel = frame.shape
+#     fcount += 1
+#   except:
+#     break
+#   # cv2.imshow('raw',frame)
+#   # frame = cv2.flip(frame,0)
+#   # frame = cv2.flip(frame,1)
+#   #if height > TARGET_HEIGHT:
+#   #width = int( width * TARGET_HEIGHT / height)
+#   #dim = (width, TARGET_HEIGHT)
+#   #height = TARGET_HEIGHT
+#   #frame = cv2.resize(frame, dim, interpolation = cv2.INTER_AREA)
+#   w = TARGET_WIDTH
+#   h = TARGET_HEIGHT
+#   # TARGET_WIDTH and TARGET_HEIGHT are set to 1164, 874 as sample.hevc file. You can modify these at line 31.
+#   # Below code will crop image.
+#   # x axis: from center (automatically)
+#   # y axis: from top (you can adjust 'y' to make change for wi arae wi wi arae wi arae wiwi arae...)
+#   x = int(width/2 -w/2)
+#   y = 0             # modify this from 0 to (HEIGHT - TARGET_HEIGHT).
+#   xoff = 0
+#   # frame = frame[y: y + h, x+xoff: x + w +xoff]
+#   width = w
+#   height = h
+#   img_yuv = cv2.cvtColor(frame, cv2.COLOR_BGR2YUV_I420)
+#   # imgs.append(img_yuv.reshape((height*3//2, width)))
+#   # if i%6 == 0:
+#   img_yuv = transform_img(img_yuv, from_intr=FLIR_INTRINSIC, to_intr=medmodel_intrinsics, yuv=True,
+#                                     output_size=(512,256))
+#   imgs.append(img_yuv)
 
 def frames_to_tensor(frames):                                                                                               
   H = (frames.shape[1]*2)//3                                                                                                
   W = frames.shape[2]                                                                                                       
-  in_img1 = np.zeros((frames.shape[0], 6, H//2, W//2), dtype=np.uint8)                                                      
+  in_img1 = np.zeros((1, 6, H//2, W//2), dtype=np.uint8)                                                      
                                                                                                                             
   in_img1[:, 0] = frames[:, 0:H:2, 0::2]                                                                                    
   in_img1[:, 1] = frames[:, 1:H:2, 0::2]                                                                                    
@@ -129,17 +192,13 @@ def frames_to_tensor(frames):
 # cv2.namedWindow('image')
 # cv2.resizeWindow('image',1920,1080)
 
-imgs_med_model = np.zeros((len(imgs), 384, 512), dtype=np.uint8)
-for i, img in tqdm(enumerate(imgs)):
-  
-  imgs_med_model[i] = transform_img(img, from_intr=eon_intrinsics, to_intr=medmodel_intrinsics, yuv=True,
-                                    output_size=(512,256))
+
   # testimg = transform_img(img, from_intr=eon_intrinsics, to_intr=medmodel_intrinsics, yuv=True,
   #                                   output_size=(512, 256))
   # cv2.imshow('image',imgs_med_model[i])
   # cv2.waitKey(10)
   # print(img.shape)
-frame_tensors = frames_to_tensor(np.array(imgs_med_model)).astype(np.float32)
+# frame_tensors = frames_to_tensor(np.array(imgs)).astype(np.float32)
 
 
 '''
@@ -211,6 +270,18 @@ def pathxyzt(data):
 
   return outdict
 
+def velxyzt(data):
+  column = PLAN_MHP_COLUMNS
+  outdict = {}
+  outdict['x'] = []
+  outdict['y'] = []
+  outdict['z'] = []
+  for i in range(0,33):
+    outdict['x'].append(data[i*column +3])
+    outdict['y'].append(data[i*column +4])
+    outdict['z'].append(data[i*column +5])
+
+  return outdict
 def get_best_data(data, size, group_size, offset):
   max_idx = 0
   for i in range(0,size):
@@ -224,6 +295,7 @@ def get_plan_data(plan):
 def get_lead_data(lead, t_offset):
   # pdb.set_trace()
   return get_best_data(lead, LEAD_MHP_N, LEAD_MHP_GROUP_SIZE, t_offset-LEAD_MHP_SELECTION)
+
 
 def lead(lead_data, prob, t_offset):
   data = get_lead_data(lead_data, t_offset)
@@ -247,28 +319,74 @@ desire[0][0] = 1
 traffic_convention = np.array([[0,0]]).astype(np.float32)
 
 cap = cv2.VideoCapture(camerafile)
+# fcount = 0
+# w = TARGET_WIDTH
+# h = TARGET_HEIGHT
+# x = int(width/2 -w/2)
+# y = 0             # modify this from 0 to (HEIGHT - TARGET_HEIGHT).
+# xoff = 0
+# width = w
+# height = h
+# for i in tqdm(range(fcount - 1)):
+for i in tqdm(range(3000)):
+  try:
+    ret, frame = cap.read()
+    height, width, channel = frame.shape
+    img_yuv = cv2.cvtColor(frame, cv2.COLOR_BGR2YUV_I420)
+    # img_yuv = transform_img(img_yuv, from_intr=eon_intrinsics, to_intr=medmodel_intrinsics, yuv=True,
+    #                                 output_size=(512,256))
+    img_yuv = transform_img(img_yuv, from_intr=galaxy_intrinsics, to_intr=medmodel_intrinsics, yuv=True,
+                                    output_size=(512,256),augment_eulers=np.array([-0.05,-0.05,0.0]))
+    # img_yuv = transform_img(img_yuv, from_intr=FLIR_INTRINSIC, to_intr=medmodel_intrinsics, yuv=True,
+    #                                 output_size=(512,256),augment_eulers=np.array([0.025,0.07,0.0]))
+    frame_tensors = frames_to_tensor(np.array([img_yuv])).astype(np.float32)
+    
 
-for i in tqdm(range(len(frame_tensors) - 1)):
-  inputs = [np.vstack(frame_tensors[i:i+2])[None], desire, state]
-  input_dict = {'input_imgs':np.vstack(frame_tensors[i:i+2])[None], 'desire':desire, 'initial_state':state, 'traffic_convention':traffic_convention}
+  except:
+    import traceback
+    traceback.print_exc()
+    break
+
+  
+
+  # img_yuv = cv2.cvtColor(frame, cv2.COLOR_BGR2YUV_I420)
+  # inputs = [np.vstack(frame_tensors,frame_tensors_prev)[None], desire, state]
+  # print(frame_tensors.shape)
+  if i == 0:
+    frame_tensors_prev = frame_tensors
+    continue
+  
+  input_dict = {'input_imgs':np.vstack([frame_tensors_prev[0],frame_tensors[0]])[None], 'desire':desire, 'initial_state':state, 'traffic_convention':traffic_convention}
+  frame_tensors_prev = frame_tensors
   label_name = onnx_session.get_outputs()[0].name
   outs = onnx_session.run([label_name], input_dict)
   outarray = outs[0][0]
+  # img = torch.from_numpy(np.vstack(frame_tensors[i:i+2])[None])
+  # des = torch.from_numpy(desire)
+  # sta = torch.from_numpy(state)
+  # tc = torch.from_numpy(traffic_convention)
+  # # print(img.size())
+  # # print(des.size())
+  # # print(sta.size())
+  # # print(tc.size())
+  # torch_out = torch_model(img.cuda(),des.cuda(), tc.cuda(),sta.cuda()).cpu()
+  # outarray = torch_out.detach().numpy()[0]
+  # print(outarray.shape)
   # desire = np.array([outarray[DESIRE_STATE_IDX:DESIRE_STATE_IDX+DESIRE_LEN]])
   # print(desire)
-  state = np.array([outarray[-512:]])
+  # state = np.array([outarray[-512:]])
 
-  with open('./data/input{}.npy'.format(i), 'wb') as f:
-    np.save(f, np.vstack(frame_tensors[i:i+2])[None])
+  # with open('./data/input{}.npy'.format(i), 'wb') as f:
+  #   np.save(f, np.vstack(frame_tensors[i:i+2])[None])
 
-  with open('./data/desire{}.npy'.format(i), 'wb') as f:
-    np.save(f, desire)
+  # with open('./data/desire{}.npy'.format(i), 'wb') as f:
+  #   np.save(f, desire)
 
-  with open('./data/traffic{}.npy'.format(i), 'wb') as f:
-    np.save(f, traffic_convention)
+  # with open('./data/traffic{}.npy'.format(i), 'wb') as f:
+  #   np.save(f, traffic_convention)
 
-  with open('./data/initial{}.npy'.format(i), 'wb') as f:
-    np.save(f, state)
+  # with open('./data/initial{}.npy'.format(i), 'wb') as f:
+  #   np.save(f, state)
 
   # outs = supercombo.predict(inputs)
   # parsed = parser(outs)
@@ -282,12 +400,13 @@ for i in tqdm(range(len(frame_tensors) - 1)):
   lead2 = lead(outarray[LEAD_IDX:LEAD_PROB_IDX], outarray[LEAD_PROB_IDX:DESIRE_STATE_IDX],1)
   lead4 = lead(outarray[LEAD_IDX:LEAD_PROB_IDX], outarray[LEAD_PROB_IDX:DESIRE_STATE_IDX],2)
   path = pathxyzt(best_plan)
+  vel = velxyzt(best_plan)
   ll = lanexyzt(outarray, LL_IDX)
   l = lanexyzt(outarray, LL_IDX + 66)
   r = lanexyzt(outarray, LL_IDX + 66*2)
   rr = lanexyzt(outarray, LL_IDX + 66*3)
-  # print("TRANS : ",outarray[POSE_IDX:POSE_IDX+3])
-  # print("ROT : ", outarray[POSE_IDX+3:POSE_IDX+6])
+  print("TRANS : ",outarray[10803:10806])
+  print("ROT : ", outarray[POSE_IDX+3:POSE_IDX+6])
   # print(1/(1 + np.exp(-outarray[LL_PROB_IDX:LL_PROB_IDX+4])))
   # t0 = xyzt(outarray, LL_IDX + 66*4)
   # t1 = xyzt(outarray, LL_IDX + 66*5)
@@ -301,87 +420,116 @@ for i in tqdm(range(len(frame_tensors) - 1)):
   # t9 = xyzt(outarray, LL_IDX + 66*13)
   # t10 = xyzt(outarray, LL_IDX + 33*14)
   # t11 = xyzt(outarray, LL_IDX + 33*15) 
+  # print(vel)
+  pose = np.hstack([outarray[POSE_IDX:POSE_IDX+6]])
+  try:
+    llysave = np.vstack((llysave, ll['y']))
+    llxsave = np.vstack((llxsave, ll['x']))
+    lysave = np.vstack((lysave, l['y']))
+    lxsave = np.vstack((lxsave, l['x']))
+    rysave = np.vstack((rysave, r['y']))
+    rxsave = np.vstack((rxsave, r['x']))
+    rrysave = np.vstack((rrysave, rr['y']))
+    rrxsave = np.vstack((rrxsave, rr['x']))
+    lesave = np.vstack((lesave, le['y']))
+    resave = np.vstack((resave, re['y']))
+    posesave = np.vstack((posesave, pose))
+  except:
+    llysave = ll['y']
+    llxsave = ll['x']
+    lysave = l['y']
+    lxsave = l['x']
+    rysave = r['y'] 
+    rxsave = r['x']
+    rrysave = rr['y']
+    rrxsave = rr['x']
+    posesave = pose
+    resave = re['y']
+    lesave = le['y']
 
-  ret, frame = cap.read()
-  h, w, c = frame.shape
-  # frame = cv2.flip(frame,0)
-  # frame = cv2.flip(frame,1)
+  # ret, frame = cap.read()
+  # h, w, c = frame.shape
+  # # frame = cv2.flip(frame,0)
+  # # frame = cv2.flip(frame,1)
 
-  # display_width = int( w * DISPLAY_HEIGHT / h)
-  # dim = (display_width, DISPLAY_HEIGHT)
-  # frame = cv2.resize(frame, dim, interpolation = cv2.INTER_AREA)  
-  frame = frame[y: y + h, x+xoff: x + w +xoff]
-  # Show raw camera image
-  # cv2.namedWindow("Input Image")
+  # # display_width = int( w * DISPLAY_HEIGHT / h)
+  # # dim = (display_width, DISPLAY_HEIGHT)
+  # # frame = cv2.resize(frame, dim, interpolation = cv2.INTER_AREA)  
+  # # frame = frame[y: y + h, x+xoff: x + w +xoff]
+  # # Show raw camera image
+  # # cv2.namedWindow("Input Image")
+  # # cv2.moveWindow("Input Image",960,0)
+  # # cv2.imshow("Input Image", frame)
+  # # Clean plot for next frame
+  # plt.clf()
+  # plt.title("lanes and path")
+  
+  # # plt.xlim([-20, 20])
+  # # plt.ylim([0, 200])
+  # # thismanager = plt.get_current_fig_manager()
+  # # thismanager.window.wm_geometry("+960+540")
+
+  # # lll = left lane line
+  # # print(parsed.keys())
+
+  # '''PLOT TOPVIEW'''
+
+  cv2.namedWindow("Input Image")
   # cv2.moveWindow("Input Image",960,0)
-  # cv2.imshow("Input Image", frame)
-  # Clean plot for next frame
+ 
+  cv2.imshow("Input Image", cv2.cvtColor(img_yuv, cv2.COLOR_YUV2RGB_I420))
   plt.clf()
-  plt.title("lanes and path")
+  plt.xlim(-20, 20)
+  plt.ylim(0, 200)
+  plt.plot(path['y'], path['x'], linewidth=3)
+  leada = outarray[LEAD_IDX:LEAD_PROB_IDX]
+  plt.plot(ll['y'], ll['x'], linewidth=1)
+  plt.plot(l['y'], l['x'], linewidth=3)
+  plt.plot(r['y'], r['x'], linewidth=3)
+  plt.plot(rr['y'], rr['x'], linewidth=1)
+  plt.plot(lead0['y'],lead0['x'],'o')
+  plt.plot(lead2['y'],lead2['x'],'o')
+  plt.plot(lead4['y'],lead4['x'],'o')
+  plt.plot(le['y'], le['x'], linewidth=2)
+  plt.plot(re['y'], re['x'], linewidth=2)
+
+  # '''PLOT TOPVIEW END'''
+
+  # '''PLOT OVERLAY VIEW'''
+  # plt.xlim(0, 1164)
+  # plt.ylim(874, 0)
+  # plt.imshow(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
   
-  # plt.xlim([-20, 20])
-  # plt.ylim([0, 200])
-  # thismanager = plt.get_current_fig_manager()
-  # thismanager.window.wm_geometry("+960+540")
+  # plotoffset = 20
 
-  # lll = left lane line
-  # print(parsed.keys())
+  # ll_2d = {'x':[],'y':[]}
+  # ll_2d['x'], ll_2d['y'] = transform_points(ll['x'], ll['y'])
 
-  '''PLOT TOPVIEW'''
+  # l_2d = {'x':[],'y':[]}
+  # l_2d['x'], l_2d['y'] = transform_points(l['x'], l['y'])
 
-  # cv2.namedWindow("Input Image")
-  # cv2.moveWindow("Input Image",960,0)
-  # cv2.imshow("Input Image", frame)
+  # r_2d = {'x':[],'y':[]}
+  # r_2d['x'], r_2d['y'] = transform_points(r['x'], r['y'])
 
-  # plt.plot(path['y'], path['x'], linewidth=3)
-  # leada = outarray[LEAD_IDX:LEAD_PROB_IDX]
-  # plt.plot(ll['y'], ll['x'], linewidth=1)
-  # plt.plot(l['y'], l['x'], linewidth=3)
-  # plt.plot(r['y'], r['x'], linewidth=3)
-  # plt.plot(rr['y'], rr['x'], linewidth=1)
-  # plt.plot(lead0['y'],lead0['x'],'o')
-  # plt.plot(lead2['y'],lead2['x'],'o')
-  # plt.plot(lead4['y'],lead4['x'],'o')
-  # plt.plot(le['y'], le['x'], linewidth=2)
-  # plt.plot(re['y'], re['x'], linewidth=2)
+  # rr_2d = {'x':[],'y':[]}
+  # rr_2d['x'], rr_2d['y'] = transform_points(rr['x'], rr['y'])
 
-  '''PLOT TOPVIEW END'''
+  # path_2d = {'x':[],'y':[]}
+  # path_2d['x'], path_2d['y'] = transform_points(path['x'], path['y'])
 
-  '''PLOT OVERLAY VIEW'''
-  plt.xlim(0, 1164)
-  plt.ylim(874, 0)
-  plt.imshow(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
-  
-  plotoffset = 20
+  # le_2d = {'x':[],'y':[]}
+  # le_2d['x'], le_2d['y'] = transform_points(le['x'], le['y'])
 
-  ll_2d = {'x':[],'y':[]}
-  ll_2d['x'], ll_2d['y'] = transform_points(ll['x'], ll['y'])
+  # re_2d = {'x':[],'y':[]}
+  # re_2d['x'], re_2d['y'] = transform_points(re['x'], re['y'])
 
-  l_2d = {'x':[],'y':[]}
-  l_2d['x'], l_2d['y'] = transform_points(l['x'], l['y'])
-
-  r_2d = {'x':[],'y':[]}
-  r_2d['x'], r_2d['y'] = transform_points(r['x'], r['y'])
-
-  rr_2d = {'x':[],'y':[]}
-  rr_2d['x'], rr_2d['y'] = transform_points(rr['x'], rr['y'])
-
-  path_2d = {'x':[],'y':[]}
-  path_2d['x'], path_2d['y'] = transform_points(path['x'], path['y'])
-
-  le_2d = {'x':[],'y':[]}
-  le_2d['x'], le_2d['y'] = transform_points(le['x'], le['y'])
-
-  re_2d = {'x':[],'y':[]}
-  re_2d['x'], re_2d['y'] = transform_points(re['x'], re['y'])
-
-  plt.plot(ll_2d['x'], ll_2d['y'],label='transformed',  color='w')
-  plt.plot(l_2d['x'], l_2d['y'],label='transformed',  color='w')
-  plt.plot(r_2d['x'], r_2d['y'],label='transformed',  color='w')
-  plt.plot(rr_2d['x'], rr_2d['y'],label='transformed',  color='w')
-  plt.plot(path_2d['x'], path_2d['y'],label='transformed',  color='w')
-  plt.plot(le_2d['x'], ll_2d['y'],label='transformed',  color='w')
-  plt.plot(re_2d['x'], re_2d['y'],label='transformed', color='w')
+  # plt.plot(ll_2d['x'], ll_2d['y'],label='transformed',  color='w')
+  # plt.plot(l_2d['x'], l_2d['y'],label='transformed',  color='w')
+  # plt.plot(r_2d['x'], r_2d['y'],label='transformed',  color='w')
+  # plt.plot(rr_2d['x'], rr_2d['y'],label='transformed',  color='w')
+  # plt.plot(path_2d['x'], path_2d['y'],label='transformed',  color='w')
+  # plt.plot(le_2d['x'], ll_2d['y'],label='transformed',  color='w')
+  # plt.plot(re_2d['x'], re_2d['y'],label='transformed', color='w')
 
 
   '''PLOT OVERLAY END'''
@@ -400,8 +548,20 @@ for i in tqdm(range(len(frame_tensors) - 1)):
   
   # Needed to invert axis because standart left lane is positive and right lane is negative, so we flip the x axis
   # plt.gca().invert_xaxis()
-  plt.pause(0.001)
-  if cv2.waitKey(10) & 0xFF == ord('q'):
+  plt.pause(0.0002)
+  if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
+
+np.savetxt("llx.csv", llxsave, delimiter=",")
+np.savetxt("lly.csv", llysave, delimiter=",")
+np.savetxt("lx.csv", lxsave, delimiter=",")
+np.savetxt("ly.csv", lysave, delimiter=",")
+np.savetxt("rx.csv", rxsave, delimiter=",")
+np.savetxt("ry.csv", rysave, delimiter=",")
+np.savetxt("rrx.csv", rrxsave, delimiter=",")
+np.savetxt("rry.csv", rrysave, delimiter=",")
+np.savetxt("rey.csv", resave, delimiter=",")
+np.savetxt("ley.csv", lesave, delimiter=",")
+np.savetxt("pose.csv", posesave, delimiter=",")
 plt.show()

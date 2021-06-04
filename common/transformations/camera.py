@@ -235,7 +235,7 @@ def transform_img(base_img,
                  blur=0):
   import cv2  # pylint: disable=import-error
   cv2.setNumThreads(1)
-  augment_eulers=[0.,0.1,-0.0]
+  # augment_eulers=[0.,0.1,-0.0]
   if yuv:
     base_img = cv2.cvtColor(base_img, cv2.COLOR_YUV2BGR_I420)
 
