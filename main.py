@@ -1,24 +1,32 @@
 #!/usr/bin/env python3
-from common.transformations.camera import transform_img, eon_intrinsics
+from traceback import print_exc
+from common.transformations.camera import transform_img, get_M, eon_intrinsics
 from common.transformations.model import medmodel_intrinsics
 from common.lanes_image_space import transform_points
 import numpy as np
 from tqdm import tqdm
 import matplotlib
 import matplotlib.pyplot as plt
+import pbcvt
+from datetime import date, datetime
 
 import cv2 
 # from tensorflow.keras.models import load_model
 from common.tools.lib.parser import parser
 import cv2
 import sys
+import os
 camerafile = sys.argv[1]
+input = sys.argv[1].replace(".mp4", ".json")
+cmd = './gpmf-parser ' + camerafile + ' ' + input
+os.system(cmd)
 # supercombo = load_model('models/supercombo.keras')
 
 import onnxruntime
 import onnx
 import pdb
 import csv
+import json
 
 import torch
 import torchvision
@@ -42,7 +50,7 @@ providers = [
 onnx_session = onnxruntime.InferenceSession('models/supercombo_kl.onnx', sess_options, providers=providers)
 print(onnxruntime.get_device())
 print(onnx_session.get_providers())
-onnx_model = onnx.load('models/supercombo.onnx')
+# onnx_model = onnx.load('models/supercombo.onnx')
 # torch_model = ConvertModel(onnx_model, experimental=True)
 # print(torch_model)
 # torch_model.eval()
@@ -246,13 +254,22 @@ X_IDX = [ 0.    ,   0.1875,   0.75  ,   1.6875,   3.    ,   4.6875,
 def lanexyzt(data, startindex):
   column = 2
   column_offset = -1
-  curdata = data[startindex:]
+  # curdata = data[startindex:]
+  # probdata = data[LL_PROB_IDX-LL_IDX + startindex:]
+  prob_idx = (startindex - LL_IDX)//66
+  std_idx = startindex + 66*4
   outdict = {}
   outdict['x'] = X_IDX
   outdict['y'] = []
+  outdict['std_y'] = []
+  outdict['prob'] = []
+  #outdict['std_y'].append(np.exp(data[std_idx]))
+  #outdict['prob'].append(1/(1+np.exp(-data[LL_PROB_IDX+prob_idx])))
   for i in range(0,33):
     
-    outdict['y'].append(curdata[i*2])
+    outdict['y'].append(data[startindex+i*2])
+    outdict['std_y'].append(np.exp(data[std_idx+i*2]))
+    outdict['prob'].append(1/(1+np.exp(-data[LL_PROB_IDX+prob_idx+i*2])))
   
   return outdict
 
@@ -305,6 +322,10 @@ def lead(lead_data, prob, t_offset):
   lead['v'] = data[2]
   lead['a'] = data[3]
   # leat['t'] = T
+  # lead['std_x'] = np.exp(data[LEAD_MHP_VALS])
+  # lead['std_y'] = np.exp(data[LEAD_MHP_VALS + 1])
+  # lead['std_v'] = np.exp(data[LEAD_MHP_VALS + 2])
+  # lead['std_a'] = np.exp(data[LEAD_MHP_VALS + 3])
 
   return lead
 
@@ -319,6 +340,8 @@ desire[0][0] = 1
 traffic_convention = np.array([[0,0]]).astype(np.float32)
 
 cap = cv2.VideoCapture(camerafile)
+frame_len = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+frame_list = list()
 # fcount = 0
 # w = TARGET_WIDTH
 # h = TARGET_HEIGHT
@@ -328,20 +351,34 @@ cap = cv2.VideoCapture(camerafile)
 # width = w
 # height = h
 # for i in tqdm(range(fcount - 1)):
-for i in tqdm(range(3000)):
+for i in tqdm(range(0,int(frame_len))):
   try:
+    time = cap.get(cv2.CAP_PROP_POS_MSEC)
     ret, frame = cap.read()
     height, width, channel = frame.shape
     img_yuv = cv2.cvtColor(frame, cv2.COLOR_BGR2YUV_I420)
+    # print(datetime.now())
+    # img_yuv = pbcvt.mycvtColor(frame)
+
     # img_yuv = transform_img(img_yuv, from_intr=eon_intrinsics, to_intr=medmodel_intrinsics, yuv=True,
     #                                 output_size=(512,256))
-    img_yuv = transform_img(img_yuv, from_intr=galaxy_intrinsics, to_intr=medmodel_intrinsics, yuv=True,
-                                    output_size=(512,256),augment_eulers=np.array([-0.05,-0.05,0.0]))
+    size = img_yuv.shape[:2]
+    cy = galaxy_intrinsics[1,2]
+    M = get_M(galaxy_intrinsics, cy, size, np.array([0,0,0]), np.array([0,0,0]), medmodel_intrinsics)
+    # print(datetime.now())
+    
+    img_yuv = pbcvt.transform_img(img_yuv, M)
+    # print(datetime.now())
+    
+    # img_yuv = transform_img(img_yuv, M, from_intr=galaxy_intrinsics, to_intr=medmodel_intrinsics, yuv=True,
+    #                                output_size=(512,256),augment_eulers=np.array([-0.05,-0.05,0.0]))
+    
     # img_yuv = transform_img(img_yuv, from_intr=FLIR_INTRINSIC, to_intr=medmodel_intrinsics, yuv=True,
     #                                 output_size=(512,256),augment_eulers=np.array([0.025,0.07,0.0]))
     frame_tensors = frames_to_tensor(np.array([img_yuv])).astype(np.float32)
+    frame_list.append(dict(frame=frame_tensors, time=time))
+    # print(datetime.now())
     
-
   except:
     import traceback
     traceback.print_exc()
@@ -352,12 +389,17 @@ for i in tqdm(range(3000)):
   # img_yuv = cv2.cvtColor(frame, cv2.COLOR_BGR2YUV_I420)
   # inputs = [np.vstack(frame_tensors,frame_tensors_prev)[None], desire, state]
   # print(frame_tensors.shape)
-  if i == 0:
-    frame_tensors_prev = frame_tensors
-    continue
-  
+#   if i == 0:
+#     frame_tensors_prev = frame_tensors
+#     continue
+frame_tensors = frame_list[0]['frame']
+frame_tensors_prev = frame_tensors
+
+for i in tqdm(range(0,len(frame_list))):
+  frame_tensors = frame_list[i]['frame']
   input_dict = {'input_imgs':np.vstack([frame_tensors_prev[0],frame_tensors[0]])[None], 'desire':desire, 'initial_state':state, 'traffic_convention':traffic_convention}
   frame_tensors_prev = frame_tensors
+  time = frame_list[i]['time']
   label_name = onnx_session.get_outputs()[0].name
   outs = onnx_session.run([label_name], input_dict)
   outarray = outs[0][0]
@@ -423,30 +465,47 @@ for i in tqdm(range(3000)):
   # print(vel)
   pose = np.hstack([outarray[POSE_IDX:POSE_IDX+6]])
   try:
+    llystdsave = np.vstack((llystdsave, ll['std_y']))
+    lystdsave = np.vstack((lystdsave, l['std_y']))
+    rystdsave = np.vstack((rystdsave, r['std_y']))
+    rrystdsave = np.vstack((rrystdsave, rr['std_y']))
+    llprobsave = np.vstack((llprobsave, ll['prob']))
+    lprobsave = np.vstack((lprobsave, l['prob']))
+    rprobsave = np.vstack((rprobsave, r['prob']))
+    rrprobsave = np.vstack((rrprobsave, rr['prob']))
     llysave = np.vstack((llysave, ll['y']))
-    llxsave = np.vstack((llxsave, ll['x']))
+    # llxsave = np.vstack((llxsave, ll['x']))
     lysave = np.vstack((lysave, l['y']))
-    lxsave = np.vstack((lxsave, l['x']))
+    # lxsave = np.vstack((lxsave, l['x']))
     rysave = np.vstack((rysave, r['y']))
-    rxsave = np.vstack((rxsave, r['x']))
+    # rxsave = np.vstack((rxsave, r['x']))
     rrysave = np.vstack((rrysave, rr['y']))
-    rrxsave = np.vstack((rrxsave, rr['x']))
+    # rrxsave = np.vstack((rrxsave, rr['x']))
     lesave = np.vstack((lesave, le['y']))
     resave = np.vstack((resave, re['y']))
     posesave = np.vstack((posesave, pose))
+    timesave = np.vstack((timesave, time))
   except:
+    llystdsave = ll['std_y']
+    lystdsave = l['std_y']
+    rystdsave = r['std_y']
+    rrystdsave = rr['std_y']
+    llprobsave = ll['prob']
+    lprobsave = l['prob']
+    rprobsave = r['prob']
+    rrprobsave = rr['prob']
     llysave = ll['y']
-    llxsave = ll['x']
+    # llxsave = ll['x']
     lysave = l['y']
-    lxsave = l['x']
+    # lxsave = l['x']
     rysave = r['y'] 
-    rxsave = r['x']
+    # rxsave = r['x']
     rrysave = rr['y']
-    rrxsave = rr['x']
+    # rrxsave = rr['x']
     posesave = pose
     resave = re['y']
     lesave = le['y']
-
+    timesave = time
   # ret, frame = cap.read()
   # h, w, c = frame.shape
   # # frame = cv2.flip(frame,0)
@@ -474,24 +533,24 @@ for i in tqdm(range(3000)):
 
   # '''PLOT TOPVIEW'''
 
-  cv2.namedWindow("Input Image")
+  # cv2.namedWindow("Input Image")
   # cv2.moveWindow("Input Image",960,0)
  
-  cv2.imshow("Input Image", cv2.cvtColor(img_yuv, cv2.COLOR_YUV2RGB_I420))
-  plt.clf()
-  plt.xlim(-20, 20)
-  plt.ylim(0, 200)
-  plt.plot(path['y'], path['x'], linewidth=3)
-  leada = outarray[LEAD_IDX:LEAD_PROB_IDX]
-  plt.plot(ll['y'], ll['x'], linewidth=1)
-  plt.plot(l['y'], l['x'], linewidth=3)
-  plt.plot(r['y'], r['x'], linewidth=3)
-  plt.plot(rr['y'], rr['x'], linewidth=1)
-  plt.plot(lead0['y'],lead0['x'],'o')
-  plt.plot(lead2['y'],lead2['x'],'o')
-  plt.plot(lead4['y'],lead4['x'],'o')
-  plt.plot(le['y'], le['x'], linewidth=2)
-  plt.plot(re['y'], re['x'], linewidth=2)
+  # cv2.imshow("Input Image", cv2.cvtColor(img_yuv, cv2.COLOR_YUV2RGB_I420))
+  # plt.clf()
+  # plt.xlim(-20, 20)
+  # plt.ylim(0, 200)
+  # plt.plot(path['y'], path['x'], linewidth=3)
+  # leada = outarray[LEAD_IDX:LEAD_PROB_IDX]
+  # plt.plot(ll['y'], ll['x'], linewidth=1)
+  # plt.plot(l['y'], l['x'], linewidth=3)
+  # plt.plot(r['y'], r['x'], linewidth=3)
+  # plt.plot(rr['y'], rr['x'], linewidth=1)
+  # plt.plot(lead0['y'],lead0['x'],'o')
+  # plt.plot(lead2['y'],lead2['x'],'o')
+  # plt.plot(lead4['y'],lead4['x'],'o')
+  # plt.plot(le['y'], le['x'], linewidth=2)
+  # plt.plot(re['y'], re['x'], linewidth=2)
 
   # '''PLOT TOPVIEW END'''
 
@@ -548,20 +607,101 @@ for i in tqdm(range(3000)):
   
   # Needed to invert axis because standart left lane is positive and right lane is negative, so we flip the x axis
   # plt.gca().invert_xaxis()
+  print(datetime.now())
   plt.pause(0.0002)
   if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
+filename = camerafile.replace("gpmf.mp4","result.json")
 
-np.savetxt("llx.csv", llxsave, delimiter=",")
-np.savetxt("lly.csv", llysave, delimiter=",")
-np.savetxt("lx.csv", lxsave, delimiter=",")
-np.savetxt("ly.csv", lysave, delimiter=",")
-np.savetxt("rx.csv", rxsave, delimiter=",")
-np.savetxt("ry.csv", rysave, delimiter=",")
-np.savetxt("rrx.csv", rrxsave, delimiter=",")
-np.savetxt("rry.csv", rrysave, delimiter=",")
-np.savetxt("rey.csv", resave, delimiter=",")
-np.savetxt("ley.csv", lesave, delimiter=",")
-np.savetxt("pose.csv", posesave, delimiter=",")
+with open(input,'r') as g:
+  gpmf = json.load(g)
+gps_data = gpmf['GPS data']
+accl_data = gpmf['ACCL data']
+gyro_data = gpmf['GYRO data']
+
+f = open(filename, 'w')
+result_data = list()
+video_metadata = dict(Video_metadata=gpmf['Video metadata'])
+camera_intrinsics = dict(Camera_Intrinsics=gpmf['Camera Intrinsics'])
+result_data.append(video_metadata)
+result_data.append(camera_intrinsics)
+
+j=0
+k=0
+for i2 in range(0, len(accl_data['Time data'])):
+  gpmf_time = accl_data['Time data'][i2]
+  if(len(gps_data['Time data']) != 0):
+    if(k==len(gps_data['Time data'])-1):
+        k=k
+    elif(gpmf_time > gps_data['Time data'][k+1]):
+        k = k + 1
+        if(k==len(gps_data['Time data'])):
+            k = k - 1
+  if(j==len(timesave)-1):
+    j=j
+  elif(gpmf_time > timesave[j+1]*1000):
+    j = j + 1
+    if(j==len(timesave)):
+        j = j - 1
+  
+  #gps data
+  gpmf_data = dict()
+  gpmf_data['Time'] = gpmf_time
+  if(len(gps_data['Time data']) != 0):
+    gpmf_data['GPS Time'] = gps_data['Time data'][k]
+    gpmf_data['GPS Latitude'] = gps_data['Latitude data'][k]
+    gpmf_data['GPS Longitude'] = gps_data['Longitude data'][k]
+    gpmf_data['GPS Altitude'] = gps_data['Altitude data'][k]
+    gpmf_data['GPS 2d speed'] = gps_data['2d speed data'][k]
+    gpmf_data['GPS Bearing'] = gps_data['Bearing data'][k]
+  #accl data
+  gpmf_data['ACCL x'] = accl_data['Accl x data'][i2]
+  gpmf_data['ACCL y'] = accl_data['Accl y data'][i2]
+  gpmf_data['ACCL z'] = accl_data['Accl z data'][i2]
+  #gyro data
+  gpmf_data['GYRO x'] = gyro_data['Gyro x data'][i2]
+  gpmf_data['GYRO y'] = gyro_data['Gyro y data'][i2]
+  gpmf_data['GYRO z'] = gyro_data['Gyro z data'][i2]
+  #script data
+  gpmf_data['frame'] = j
+  gpmf_data['frame time'] = float(timesave[j])*1000
+  gpmf_data['lly'] = llysave[j].tolist()
+  gpmf_data['llstd'] = llystdsave[j].tolist()
+  gpmf_data['llprob'] = llprobsave[j].tolist()
+  gpmf_data['ly'] = lysave[j].tolist()
+  gpmf_data['lstd'] = lystdsave[j].tolist()
+  gpmf_data['lprob'] = lprobsave[j].tolist()
+  gpmf_data['ry'] = rysave[j].tolist()
+  gpmf_data['rstd'] = rystdsave[j].tolist()
+  gpmf_data['rprob'] = rprobsave[j].tolist()
+  gpmf_data['rry'] = rrysave[j].tolist()
+  gpmf_data['rrstd'] = rrystdsave[j].tolist()
+  gpmf_data['rrprob'] = rrprobsave[j].tolist()
+  gpmf_data['rey'] = resave[j].tolist()
+  gpmf_data['ley'] = lesave[j].tolist()
+  gpmf_data['pose'] = posesave[j].tolist()
+  result_data.append(gpmf_data)
+json.dump(result_data, f, indent=4)
+f.close()
+
+# np.savetxt("llprob.csv", llprobsave, delimiter=",")
+# np.savetxt('lprob.csv', lprobsave, delimiter=',')
+# np.savetxt('rprob.csv', rprobsave, delimiter=',')
+# np.savetxt('rrprob.csv', rrprobsave, delimiter=',')
+# np.savetxt('rrstd.csv', rrystdsave, delimiter=',')
+# np.savetxt("rstd.csv", rystdsave, delimiter=",")
+# np.savetxt("lstd.csv", lystdsave, delimiter=",")
+# np.savetxt("llstd.csv", llystdsave, delimiter=",")
+# # np.savetxt("llx.csv", llxsave, delimiter=",")
+# np.savetxt("lly.csv", llysave, delimiter=",")
+# # np.savetxt("lx.csv", lxsave, delimiter=",")
+# np.savetxt("ly.csv", lysave, delimiter=",")
+# # np.savetxt("rx.csv", rxsave, delimiter=",")
+# np.savetxt("ry.csv", rysave, delimiter=",")
+# # np.savetxt("rrx.csv", rrxsave, delimiter=",")
+# np.savetxt("rry.csv", rrysave, delimiter=",")
+# np.savetxt("rey.csv", resave, delimiter=",")
+# np.savetxt("ley.csv", lesave, delimiter=",")
+# np.savetxt("pose.csv", posesave, delimiter=",")
 plt.show()

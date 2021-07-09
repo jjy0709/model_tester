@@ -221,7 +221,7 @@ def pretransform_from_calib(calib):
   return np.linalg.inv(camera_frame_from_calib_frame)
 
 
-def transform_img(base_img,
+def transform_img(base_img, M,
                  augment_trans=np.array([0,0,0]),
                  augment_eulers=np.array([0,0,0]),
                  from_intr=eon_intrinsics,
@@ -232,7 +232,8 @@ def transform_img(base_img,
                  yuv=False,
                  alpha=1.0,
                  beta=0,
-                 blur=0):
+                 blur=0,
+                 ):
   import cv2  # pylint: disable=import-error
   cv2.setNumThreads(1)
   # augment_eulers=[0.,0.1,-0.0]
@@ -244,25 +245,8 @@ def transform_img(base_img,
     output_size = size[::-1]
 
   cy = from_intr[1,2]
-  def get_M(h=1.22):
-    quadrangle = np.array([[0, cy + 20],
-                           [size[1]-1, cy + 20],
-                           [0, size[0]-1],
-                           [size[1]-1, size[0]-1]], dtype=np.float32)
-    quadrangle_norm = np.hstack((normalize(quadrangle, intrinsics=from_intr), np.ones((4,1))))
-    quadrangle_world = np.column_stack((h*quadrangle_norm[:,0]/quadrangle_norm[:,1],
-                                        h*np.ones(4),
-                                        h/quadrangle_norm[:,1]))
-    rot = orient.rot_from_euler(augment_eulers)
-    to_extrinsics = np.hstack((rot.T, -augment_trans[:,None]))
-    to_KE = to_intr.dot(to_extrinsics)
-    warped_quadrangle_full = np.einsum('jk,ik->ij', to_KE, np.hstack((quadrangle_world, np.ones((4,1)))))
-    warped_quadrangle = np.column_stack((warped_quadrangle_full[:,0]/warped_quadrangle_full[:,2],
-                                         warped_quadrangle_full[:,1]/warped_quadrangle_full[:,2])).astype(np.float32)
-    M = cv2.getPerspectiveTransform(quadrangle, warped_quadrangle.astype(np.float32))
-    return M
 
-  M = get_M()
+  # M = get_M(from_intr, cy, size, augment_eulers, augment_trans, to_intr)
   if pretransform is not None:
     M = M.dot(pretransform)
   augmented_rgb = cv2.warpPerspective(base_img, M, output_size, borderMode=cv2.BORDER_REPLICATE)
@@ -294,6 +278,23 @@ def transform_img(base_img,
     augmented_img = augmented_rgb
   return augmented_img
 
+def get_M(from_intr, cy, size, augment_eulers, augment_trans, to_intr, h=1.22):
+  quadrangle = np.array([[0, cy + 20],
+                          [size[1]-1, cy + 20],
+                          [0, size[0]-1],
+                          [size[1]-1, size[0]-1]], dtype=np.float32)
+  quadrangle_norm = np.hstack((normalize(quadrangle, intrinsics=from_intr), np.ones((4,1))))
+  quadrangle_world = np.column_stack((h*quadrangle_norm[:,0]/quadrangle_norm[:,1],
+                                      h*np.ones(4),
+                                      h/quadrangle_norm[:,1]))
+  rot = orient.rot_from_euler(augment_eulers)
+  to_extrinsics = np.hstack((rot.T, -augment_trans[:,None]))
+  to_KE = to_intr.dot(to_extrinsics)
+  warped_quadrangle_full = np.einsum('jk,ik->ij', to_KE, np.hstack((quadrangle_world, np.ones((4,1)))))
+  warped_quadrangle = np.column_stack((warped_quadrangle_full[:,0]/warped_quadrangle_full[:,2],
+                                        warped_quadrangle_full[:,1]/warped_quadrangle_full[:,2])).astype(np.float32)
+  M = cv2.getPerspectiveTransform(quadrangle, warped_quadrangle.astype(np.float32))
+  return M
 
 def yuv_crop(frame, output_size, center=None):
   # output_size in camera coordinates so u,v
